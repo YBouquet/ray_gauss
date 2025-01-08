@@ -13,7 +13,7 @@ from utils.general_utils import inverse_sigmoid,build_rotation
 
 import math
 
-
+# * use this as ellispoids
 class PointCloud:
   """Point Cloud class.
     """
@@ -29,7 +29,7 @@ class PointCloud:
 
     # self.harmonic_number = config.harmonic_number
     self.spherical_harmonics=torch.empty(0)
-    self.densities=torch.empty(0)
+    self.densities=torch.empty(0)  # density = sigma(alpha_densities) = - log(1 - 0.99 * alpha_densities) / ("length of shortest axis")
     self.scales=torch.empty(0)
     self.quaternions=torch.empty(0)
     self.xyz_gradient_accum_norm=torch.empty(0)
@@ -688,7 +688,8 @@ class PointCloud:
     return torch.cat([self.rgb[:,:,None],self.spherical_harmonics],dim=2)
   
   def get_scale(self):
-    scales = torch.exp(self.scales)
+    scales = torch.exp(self.scales) # positive
+    print(scales[0])
     return scales
 
   def get_inv_scale(self):

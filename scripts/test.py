@@ -10,7 +10,7 @@ from utils import general_utils as utilities
 from utils.metrics_utils import PSNR
 from skimage.metrics import structural_similarity as SSIM
 
-from optix_raycasting import optix_utils as u_ox
+from optix_2dgs_raycasting import optix_utils as u_ox
 
 from torch.utils.dlpack import to_dlpack
 from torch.utils.dlpack import from_dlpack
@@ -63,12 +63,10 @@ def inference(pointcloud,cam_list,max_prim_slice,rnd_sample,supersampling,white_
                                                                  pointcloud.sph_gauss_features.reshape(-1),pointcloud.get_bandwidth_sharpness().reshape(-1),
                                                                  pointcloud.get_normalized_lobe_axis().reshape(-1))
       L1,L2,L3=u_ox.quaternion_to_rotation(cp_quaternions)
-      bboxes = u_ox.compute_ellipsoids_bbox(cp_positions,cp_scales,L1,L2,L3,cp_densities)
-      
-      bb_min=bboxes[:,:3].min(axis=0)
-      bb_max=bboxes[:,3:].max(axis=0)
-
-      gas = u_ox.create_acceleration_structure(ctx, bboxes)
+      vertices = u_ox.compute_2dgs_bbox(cp_positions,cp_scales,L1,L2,L3,cp_densities)  
+      bb_min=vertices.min(axis=0)
+      bb_max=vertices.max(axis=0)
+      gas = u_ox.create_acceleration_structure(ctx, vertices)
       sbt = u_ox.create_sbt(program_grps, cp_positions,cp_scales,cp_quaternions)
 
       order_sh=int(np.sqrt(pointcloud.spherical_harmonics.shape[2]+1).item()-1)
@@ -93,11 +91,11 @@ def inference(pointcloud,cam_list,max_prim_slice,rnd_sample,supersampling,white_
             ################### End culling ################### 
             ################ Update new scene ################
             L1,L2,L3=u_ox.quaternion_to_rotation(cp_quaternions)
-            bboxes = u_ox.compute_ellipsoids_bbox(cp_positions,cp_scales,L1,L2,L3,cp_densities)  
-            bb_min=bboxes[:,:3].min(axis=0)
-            bb_max=bboxes[:,3:].max(axis=0)
+            vertices = u_ox.compute_2dgs_bbox(cp_positions,cp_scales,L1,L2,L3,cp_densities)  
+            bb_min=vertices.min(axis=0)
+            bb_max=vertices.max(axis=0)
 
-            gas = u_ox.create_acceleration_structure(ctx, bboxes)
+            gas = u_ox.create_acceleration_structure(ctx, vertices)
             sbt = u_ox.create_sbt(program_grps, cp_positions,cp_scales,cp_quaternions)
 
             #Check memory is contiguous
@@ -152,12 +150,12 @@ def render(pointcloud,cam_list,max_prim_slice,rnd_sample,supersampling,white_bac
                                                                  pointcloud.sph_gauss_features.reshape(-1),pointcloud.get_bandwidth_sharpness().reshape(-1),
                                                                  pointcloud.get_normalized_lobe_axis().reshape(-1))
       L1,L2,L3=u_ox.quaternion_to_rotation(cp_quaternions)
-      bboxes = u_ox.compute_ellipsoids_bbox(cp_positions,cp_scales,L1,L2,L3,cp_densities)
+      vertices = u_ox.compute_2dgs_bbox(cp_positions,cp_scales,L1,L2,L3,cp_densities)
       
-      bb_min=bboxes[:,:3].min(axis=0)
-      bb_max=bboxes[:,3:].max(axis=0)
+      bb_min=vertices.min(axis=0)
+      bb_max=vertices.max(axis=0)
 
-      gas = u_ox.create_acceleration_structure(ctx, bboxes)
+      gas = u_ox.create_acceleration_structure(ctx, vertices)
       sbt = u_ox.create_sbt(program_grps, cp_positions,cp_scales,cp_quaternions)
 
       order_sh=int(np.sqrt(pointcloud.spherical_harmonics.shape[2]+1).item()-1)

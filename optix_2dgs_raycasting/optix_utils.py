@@ -51,28 +51,32 @@ def compute_spheres_bbox(centers,scales):
     out[:, 3:] = centers + 3*scales
     return out
 
-def compute_ellipsoids_bbox(centers,scales,L1,L2,L3,densities):
+def compute_2dgs_bbox(centers,scales,L1,L2,L3,densities):
     delta=cp.log((densities/SIGMA_THRESHOLD)**2)
     delta[delta<0]=0
     delta=cp.sqrt(delta)
     
-    out = cp.empty((centers.shape[0], 6), dtype='f4')
-    scales_L1 = cp.linalg.norm(delta[:,None]*scales * L1, axis=1, keepdims=False)
-    scales_L2 = cp.linalg.norm(delta[:,None]*scales * L2, axis=1, keepdims=False)
-    scales_L3 = cp.linalg.norm(delta[:,None]*scales * L3, axis=1, keepdims=False)
+    out = cp.empty((centers.shape[0], 4, 3), dtype='f4')
+    scales_L1 = delta[:,None]*scales * L1
+    scales_L2 = delta[:,None]*scales * L2
+    #scales_L3 = cp.linalg.norm(delta[:,None]*scales * L3, axis=1, keepdims=False)
     
     #I want a Nx3 array with [L1,L2,L3] for each ellipsoid
-    out[:, :3] = centers - cp.vstack([scales_L1,scales_L2,scales_L3]).T
-    out[:, 3:] = centers + cp.vstack([scales_L1,scales_L2,scales_L3]).T
-    return out
+    out[:, [0,1,3]] = centers + scales_L1
+    out[:, [2,4,5]] = centers - scales_L1
+    out[:, [1,2,4]] = centers + scales_L2
+    out[:,[0,3,5]] = centers - scales_L2
+    return out.reshape(-1,3)
 
-def create_acceleration_structure(ctx, bboxes):
-    build_input = ox.BuildInputCustomPrimitiveArray([bboxes], num_sbt_records=1, flags=[ox.GeometryFlags.NONE])
+def create_acceleration_structure(ctx, vertices): #! change to triangles array
+    build_input = ox.BuildInputTriangleArray(vertices, num_sbt_records=1, flags=[ox.GeometryFlags.NONE])
+
     gas = ox.AccelerationStructure(ctx, [build_input], compact=True,allow_update=True)
     return gas
 
-def update_acceleration_structure(gas, bboxes):
-    build_input = ox.BuildInputCustomPrimitiveArray([bboxes], num_sbt_records=1, flags=[ox.GeometryFlags.NONE])
+def update_acceleration_structure(gas, vertices):
+    build_input = ox.BuildInputTriangleArray([vertices], num_sbt_records=1, flags=[ox.GeometryFlags.NONE])
+    
     gas.update(build_input)
 
 def create_context(log):
