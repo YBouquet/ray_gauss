@@ -4,6 +4,8 @@ import cupy as cp
 import numpy as np
 from PIL import Image, ImageOps
 import torch
+from torch.utils.dlpack import from_dlpack
+
 script_dir = os.path.dirname(__file__)
 cuda_src = os.path.join(script_dir, "cuda", "triangle.cu")
 
@@ -108,13 +110,24 @@ def create_sbt(program_grps, positions, scales, quaternions):
     return sbt
 
 
-def launch_pipeline(pipeline : ox.Pipeline, sbt, gas, colors, positions, scales, quaternions):
+def reduce_supersampling(target_width,tartget_height,ray_colors,factor):
+    """ Reduce the supersampled image by a factor k
+    """
+    factor_x,factor_y=factor
+    #Sum each factor_x values
+    ray_colors_sum=ray_colors[0::factor_x]
+    for i in range(1,factor_x):
+        ray_colors_sum+=ray_colors[i::factor_x]
+    ray_colors_sum=ray_colors_sum.reshape((tartget_height*factor_y,target_width,3))
+    #Sum each factor_y values
+    ray_colors_mean=ray_colors_sum[0::factor_y]
+    for i in range(1,factor_y):
+        ray_colors_mean+=ray_colors_sum[i::factor_y]
+    return ray_colors_mean/(factor_x*factor_y)
 
-    output_image = np.zeros(img_size + (4, ), 'B')
-    output_image[:, :, :] = [255, 128, 0, 255]
-    output_image = cp.asarray(output_image)
+def launch_pipeline(pipeline : ox.Pipeline, sbt, gas, colors, positions, scales, quaternions, supersampling = (1,1)):
+    ray_size=(img_size[1]*img_size[0]*supersampling[0]*supersampling[1],)
     params_tmp = [
-        ( 'u8', 'image'),
         ( 'u4', 'image_width'),
         ( 'u4', 'image_height'),
         ( '3f4', 'cam_eye'),
@@ -125,12 +138,12 @@ def launch_pipeline(pipeline : ox.Pipeline, sbt, gas, colors, positions, scales,
         ( 'u8', 'positions'),
         ( 'u8', 'scales'),
         ( 'u8', 'quaternions'),
+        ( 'u8', 'ray_colors'),
         ( 'u8', 'trav_handle'),
     ]
 
     params = ox.LaunchParamsRecord(names=[p[1] for p in params_tmp],
                                    formats=[p[0] for p in params_tmp])
-    params['image'] = output_image.data.ptr
     params['image_width'] = img_size[0]
     params['image_height'] = img_size[1]
     params['cam_eye'] = [0, 0, 2.0]
@@ -142,6 +155,8 @@ def launch_pipeline(pipeline : ox.Pipeline, sbt, gas, colors, positions, scales,
     params['positions'] = positions.data.ptr
     params['scales'] = scales.data.ptr
     params['quaternions'] = quaternions.data.ptr
+    ray_colors = cp.zeros((ray_size[0],3), dtype=cp.float32)
+    params['ray_colors'] = ray_colors.data.ptr
     
     stream = cp.cuda.Stream()
 
@@ -149,7 +164,7 @@ def launch_pipeline(pipeline : ox.Pipeline, sbt, gas, colors, positions, scales,
 
     stream.synchronize()
 
-    return cp.asnumpy(output_image)
+    return ray_colors
 
 def torch2cupy(*args):
     # return [cp.fromDlpack(to_dlpack(x)) for x in args]
@@ -184,8 +199,10 @@ if __name__ == "__main__":
     pipeline = create_pipeline(ctx, program_grps, pipeline_options)
     sbt = create_sbt(program_grps)
     colors = torch2cupy(torch.ones(3).float().cuda().contiguous())[0]
-    img = launch_pipeline(pipeline, sbt, gas, pcd_position, pcd_scale, colors)
+    ray_colors = launch_pipeline(pipeline, sbt, gas, pcd_position, pcd_scale, colors)
+    ray_colors=from_dlpack(ray_colors.toDlpack())
+    ray_colors_mean= reduce_supersampling(img_size[0],img_size[1],ray_colors,(1,1))
 
-    img = img.reshape(img_size[1], img_size[0], 4)
-    img = ImageOps.flip(Image.fromarray(img, 'RGBA'))
+    ray_colors_numpy = ray_colors_mean.detach().cpu().numpy().clip(0,1)
+    img = ImageOps.flip(Image.fromarray(ray_colors_numpy, 'RGB'))
     img.show()

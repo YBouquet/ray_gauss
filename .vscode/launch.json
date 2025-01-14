@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "C/C++ Runner: Debug Session",
+      "type": "lldb",
+      "request": "launch",
+      "args": [],
+      "cwd": "/Users/ybouquet/Documents/phd/dev/ray_gauss/optix_2dgs_raycasting/cuda_test",
+      "program": "/Users/ybouquet/Documents/phd/dev/ray_gauss/optix_2dgs_raycasting/cuda_test/build/Debug/outDebug"
+    }
+  ]
+}

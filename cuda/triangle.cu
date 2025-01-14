@@ -95,7 +95,8 @@ extern "C" __global__ void __intersection__gaussian()
                 t,
                 0,
                 __float_as_uint(u),
-                __float_as_uint(v));
+                __float_as_uint(v),
+                __float_as_uint(t));
         }
     }
 }
@@ -123,6 +124,22 @@ static __forceinline__ __device__ void computeRay( uint3 idx, uint3 dim, float3&
     direction = normalize( d.x * U + d.y * V + W );
 }
 
+static __forceinline__ __device__ void colorBlending(
+    KBuffer* buffer,float3 &ray_color, float &transmittance)
+{
+        HitInfo* end = buffer->hits + MAX_CLOSEST_HITS;
+        for(int hit_ptr=buffer->hits; hit_ptr<end; hit_ptr++){
+            if (transmittance < TRANSMITTANCE_EPSILON) break;
+            
+            float4 color = hit_ptr->color;
+            float alpha_i = color.w; 
+            float3 buffer_color = make_float3(color.x,color.y,color.z);
+
+            ray_color += transmittance * alpha_i * buffer_color;
+            transmittance *= 1.0f - alpha;
+        }
+}
+
 
 extern "C" __global__ void __raygen__rg()
 {
@@ -145,10 +162,13 @@ extern "C" __global__ void __raygen__rg()
     tmax = fmaxf(t0, t1);
     float tenter = fmaxf(0.0f,fmaxf(fmaxf(tmin.x, tmin.y), tmin.z));
     float texit = fminf(tmax.x, fminf(tmax.y, tmax.z));
-    const float dt = DT;
-    const float slab_spacing = dt*BUFFER_SIZE;
-    float transmittance = 1.0f;
     float3 ray_color = make_float3(0.0f);
+    float transmittance = 1.0f;
+
+    //float3 bg_color = make_float3(1.0f, 1.0f, 1.0f);
+    //if (params.white_background == 0) {
+    float3 bg_color = make_float3(0.0f, 0.0f, 0.0f);
+    //}
 
     if(tenter<texit){
         float tbuffer = tenter;
@@ -156,40 +176,36 @@ extern "C" __global__ void __raygen__rg()
         unsigned int p0;
         unsigned int bool_not_access;
 
-        while(tbuffer<texit && transmittance > TRANSMITTANCE_EPSILON){
-            p0=0;
-            t_min_slab = tbuffer;
-            t_max_slab = tbuffer + slab_spacing;
-            if (t_max_slab > tenter) {
-                // Trace the ray against our scene hierarchy
-                float buffer[BUFFER_SIZE*4]={0.0f};
-                float3 result = make_float3( 0 );
-                unsigned int p0, p1, p2;
-                packPointer(buffer, p0, p1);
-                optixTrace(
-                        params.handle,
-                        ray_origin,
-                        ray_direction,
-                        0.0f,                // Min intersection distance
-                        1e16f,               // Max intersection distance
-                        0.0f,                // rayTime -- used for motion blur
-                        OptixVisibilityMask( 255 ), // Specify always visible
-                        OPTIX_RAY_FLAG_NONE,
-                        0,                   // SBT offset   -- See SBT discussion
-                        1,                   // SBT stride   -- See SBT discussion
-                        0,                   // missSBTIndex -- See SBT discussion
-                        p0, p1, p2 );
-                
-                if (p0==0) {
-                    tbuffer+=slab_spacing;
-                    continue;
-                }
-
-                params.number_of_gaussians_per_ray[idx.x]+=p0;
-
-
-            }
+        p0=0;
+        KBuffer buffer;
+        for(uint i = 0; i < MAX_CLOSEST_HITS; i++){
+            buffer.hits[idx] = 0.0f;
         }
+        // Trace the ray against our scene hierarchy
+        //float buffer[BUFFER_SIZE*4]={0.0f};
+        unsigned int p0, p1, p2;
+        packPointer(&buffer, p0, p1);
+        optixTrace(
+                params.handle,
+                ray_origin,
+                ray_direction,
+                t_min_slab,                // Min intersection distance
+                t_max_slab,               // Max intersection distance
+                0.0f,                // rayTime -- used for motion blur
+                OptixVisibilityMask( 255 ), // Specify always visible
+                OPTIX_RAY_FLAG_NONE,
+                0,                   // SBT offset   -- See SBT discussion
+                1,                   // SBT stride   -- See SBT discussion
+                0,                   // missSBTIndex -- See SBT discussion
+                p0, p1, p2 );
+        
+        //params.number_of_gaussians_per_ray[idx.x] = p0;
+
+        colorBlending(
+            buffer, ray_color, transmittance
+        );
+        
+        params.ray_colors[idx.x] = ray_color+transmittance*bg_color;
     }
 }
 
@@ -216,19 +232,21 @@ extern "C" __global__ void __anyhit__ah() {
     unsigned int p1,p2;
     p1=optixGetPayload_1();
     p2=optixGetPayload_2();
-    float* buffer=reinterpret_cast<float*>(unpackPointer(p1,p2));
+    KBuffer* buffer=reinterpret_cast<KBuffer*>(unpackPointer(p1,p2));
 
     float u = __uint_as_float(optixGetAttribute_0());
     float v = __uint_as_float(optixGetAttribute_1());
+    float t = __uint_as_float(optixGetAttribute_2());
+    
     float3 gaussian_color = make_float3(params.color_features[current_gaussian_idx*3],params.color_features[current_gaussian_idx*3+1],params.color_features[current_gaussian_idx*3+2]);
 
     float weight=expf(-0.5f*(u*u+v*v));
     float weight_density=weight;//*density;
     if (weight_density> SIGMA_THRESHOLD) {
-        buffer[0]+=weight_density;
-        buffer[1]+=gaussian_color.x*weight_density;
-        buffer[2]+=gaussian_color.y*weight_density;
-        buffer[3]+=gaussian_color.z*weight_density;
+        HitInfo hit;
+        hit.t = t;
+        hit.color = float4(gaussian_color, weight_density);
+        buffer->insert(hit);
     }
 
     optixSetPayload_0(num_primitives + 1);
