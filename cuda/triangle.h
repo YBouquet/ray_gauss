@@ -28,6 +28,21 @@
 
 #pragma once
 
+#define BUFFER_SIZE 8
+#define DT 0.0025f
+#define TRANSMITTANCE_EPSILON 0.003f
+#define SIGMA_THRESHOLD 0.1f
+
+namespace sphere {
+    // const unsigned int NUM_ATTRIBUTE_VALUES = 4u;
+
+    struct SphereHitGroupData {
+        float3* positions;
+        float3* scales;
+        float4* quaternions;
+    };
+}
+
 struct Params
 {
     uchar4*                image;
@@ -36,6 +51,10 @@ struct Params
     float3                 cam_eye;
     float3                 cam_u, cam_v, cam_w;
     float*                 color_features;
+    float3*                 positions;
+    float3*                 scales;
+    float4*                 quaternions;
+    
     OptixTraversableHandle handle;
 };
 
@@ -56,3 +75,18 @@ struct HitGroupData
 {
     // No data needed
 };
+
+static __forceinline__ __device__ void  packPointer( void* ptr, unsigned int& i0, unsigned int& i1 )
+{
+    const unsigned long long uptr = reinterpret_cast<unsigned long long>(ptr);
+    i0 = uptr >> 32;
+    i1 = uptr & 0x00000000ffffffff;
+}
+
+static __forceinline__ __device__ void* unpackPointer( unsigned int i0, unsigned int i1 )
+{
+    const unsigned long long uptr = static_cast<unsigned long long>(i0) << 32 | i1;
+    void*           ptr = reinterpret_cast<void*>(uptr);
+    return ptr;
+}
+
